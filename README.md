@@ -3,7 +3,7 @@
 Tony Tong (taotong@berkeley.edu, ttong@pro-ai.org)
 
 ### lstm.py
-A high-level multi-layer LSTM recurrent neural network interface tailored for financial time-series prediction built on top of [TensorFlow](http://tensorflow.org) backend. 
+A high-level multi-layer LSTM recurrent neural network interface tailored for financial time-series prediction built on top of [TensorFlow](http://tensorflow.org) backend.  The class container also provides a convenient wrapper for GRU or basic RNN network as well. 
 
 <img src="multilayer_lstm.jpg" alt="lstm" align="middle" width=70%>
 
