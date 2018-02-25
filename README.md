@@ -29,7 +29,7 @@ results = g.train(batch_X=batch_X, batch_y=batch_y, in_sample_size=1600, epoch_e
 ```python
 g = GRU(n_input_features=10, batch_size=None, n_states=50, n_layers=2, n_time_steps=100, 
         l1_reg=0.05, l2_reg=0.01, start_learning_rate=0.001, decay_steps=1, decay_rate=0.3, 
-        inner_iteration=10, forward_step=1)
+        inner_iteration=10, forward_step=1, scope='gru')
 ```
 
 #### Basic RNN network
@@ -37,7 +37,7 @@ g = GRU(n_input_features=10, batch_size=None, n_states=50, n_layers=2, n_time_st
 ```python
 g = RNN(n_input_features=10, batch_size=None, n_states=50, n_layers=2, n_time_steps=100, 
         l1_reg=0.05, l2_reg=0.01, start_learning_rate=0.001, decay_steps=1, decay_rate=0.3, 
-        inner_iteration=10, forward_step=1)
+        inner_iteration=10, forward_step=1, scope='rnn')
 ```
 
 Show tensorflow graph:
