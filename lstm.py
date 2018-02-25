@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # lstm.py
-# author: Tony Tong (taotong@berkeley.edu)
+# author: Tony Tong (taotong@berkeley.edu, ttong@pro-ai.org)
 
 import numpy as np
 import random
@@ -431,8 +431,10 @@ class LSTM:
                         # this the loss function for optimization purpose
                         loss = tf.nn.l2_loss(tf.subtract(y_is, pred_is)) + \
                                tf.contrib.layers.apply_regularization(
-                                   tf.contrib.layers.l1_l2_regularizer(scale_l1=self.l1_reg_scale,
-                                                                       scale_l2=self.l2_reg_scale),
+                                   tf.contrib.layers.l1_l2_regularizer(
+                                       scale_l1=self.l1_reg_scale,
+                                       scale_l2=self.l2_reg_scale
+                                   ),
                                    tf.trainable_variables()
                                )
 
@@ -485,10 +487,11 @@ class LSTM:
                         summary_op=summary_op,
                         writer=writer
                     )
+    # end create_lstm_graph
 
     def train(self, batch_X=None, batch_y=None, in_sample_size=None, y_is_mean=0.0, y_is_std=1.0, data_feeder=None,
-              restore_model=False, pre_trained_model=None, epoch_prev=0, epoch_end=21,
-              step=1, writer_step=1, display_step=50, return_weights=False, log=None, verbose=0):
+              restore_model=False, pre_trained_model=None, epoch_prev=0, epoch_end=21, inner_iteration=None,
+              step=1, writer_step=1, display_step=50, return_weights=False, log=None, mode='train', verbose=0):
         """Perform training of the LSTM network on specified compute device.
         There are two ways of feeding in data:
 
@@ -545,11 +548,17 @@ class LSTM:
                 predicted_oos = None
                 loss_epoch = 0.0
 
-                for batch_X, batch_y, y_is_mean, y_is_std, in_sample_size, total_sample_size in data_feeder():
+                for batch_X, batch_y, y_is_mean, y_is_std, in_sample_size in data_feeder():
                     # Run optimization
                     # Note: dropout is intended for training only
+                    total_sample_size = batch_X.shape[0]
+                    assert in_sample_size <= total_sample_size, "in_sample_size needs to be smaller than total"
 
-                    for _ in range(self.inner_iteration):
+                    # if inner_iteration is passed in, then it takes priority over internal state
+                    if inner_iteration is None:
+                        inner_iteration = self.inner_iteration
+
+                    for _ in range(inner_iteration):
                         _, current_rate, states_val = sess.run(
                             [
                                 self.graph_keys['optimizer'],
@@ -566,12 +575,17 @@ class LSTM:
                         )
 
                     # Obtain out of sample target variable and prediction
-                    y_val, pred_val, y_oos_val, pred_oos_val = sess.run(
+                    y_val, pred_val, y_oos_val, pred_oos_val, \
+                        pearson_corr_is_val, pearson_corr_oos_val, loss_val, summary = sess.run(
                         [
                             self.graph_keys['y'],
                             self.graph_keys['pred'],
                             self.graph_keys['y_oos'],
-                            self.graph_keys['pred_oos']
+                            self.graph_keys['pred_oos'],
+                            self.graph_keys['pearson_corr_is'],
+                            self.graph_keys['pearson_corr_oos'],
+                            self.graph_keys['loss'],
+                            self.graph_keys['summary_op']
                         ],
                         feed_dict={
                             self.graph_keys['X']: batch_X,
@@ -621,23 +635,8 @@ class LSTM:
                     else:
                         self.all_predicted_oos = np.r_[self.all_predicted_oos, np.array(pred_oos_val)]
 
-                    # Calculate batch correlation, loss, and summary
-                    pearson_corr_is_val, pearson_corr_oos_val, loss_val, summary = sess.run(
-                        [
-                            self.graph_keys['pearson_corr_is'],
-                            self.graph_keys['pearson_corr_oos'],
-                            self.graph_keys['loss'],
-                            self.graph_keys['summary_op']
-                        ],
-                        feed_dict={
-                            self.graph_keys['X']: batch_X,
-                            self.graph_keys['y']: batch_y,
-                            self.graph_keys['keep_prob']: 1.0,
-                            self.graph_keys['in_sample_cutoff']: in_sample_size
-                        }
-                    )
-                    pearson_corr_is_val = pearson_corr_is_val[0, 0]  # Taking the corr of first output only
-                    pearson_corr_oos_val = pearson_corr_oos_val[0, 0]  # Taking the corr of the first output only
+                    pearson_corr_is_val = np.diagonal(pearson_corr_is_val)[0]  # Taking the corr of first output only
+                    pearson_corr_oos_val = np.diagonal(pearson_corr_oos_val)[0]  # Taking the corr of the first output only
 
                     self.all_corr_is.append(pearson_corr_is_val)
                     self.all_corr_oos.append(pearson_corr_oos_val)
@@ -720,7 +719,7 @@ class LSTM:
                 self.all_losses_per_epoch.append(loss_epoch)
                 self.all_corr_oos_per_epoch.append(corr_epoch_oos)
                 log.info(
-                    f'[{self.sessid}] Epoch {i}: total loss: {loss_epoch}, '
+                    f'[{self.sessid}] Epoch {i}: total loss: {loss_epoch:.1f}, '
                     f'total oos pearson corr: {corr_epoch_oos:8.5f}'
                 )
                 log.info(
@@ -753,6 +752,61 @@ class LSTM:
                     )
                 )
             return results
+    # end train
+
+    def predict(self, batch_X=None, data_feeder=None, restore_model=False, pre_trained_model=None, log=None):
+        """Use trained model or restore from pre-trained model to predict
+        Note: if a generator is passed in, the tensorflow Session will hold resources active until iterating
+        through the entire iterable dataset.
+        Return/Yield: predicted values
+        """
+        if log is None:
+            log = logger
+
+        if self.graph is None:
+            log.warning("No graph available for prediction.  Need to have a compute graph trained weights or "
+                        "to be loaded from pre-trained saved model.")
+            return None
+
+        # If batch data are specifically provided, it will take priority over data_feeder
+        if batch_X is not None:
+            def data_feeder():
+                return [batch_X]
+
+        # Launch a tensorflow compute session
+        with tf.Session(graph=self.graph,
+                        config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=True)) as sess:
+            # Restore latest checkpoint
+            if restore_model:
+                try:
+                    self.model_saver.restore(sess, os.path.join(self.model_dir, pre_trained_model))
+                except Exception as msg:
+                    log.exception("Session restore failed: ", msg)
+                    raise Exception
+                if self.sessid is None:
+                    self.sessid = id_generator()
+                log.info(f"[{self.sessid}] Restored pre-trained model successfully")
+            else:
+                if self.sessid is None:
+                    self.sessid = id_generator()
+            self.logging_session_parameters()
+
+            for batch_X in data_feeder():
+                total_sample_size = batch_X.shape[0]
+                # Obtain out of sample target variable and prediction
+                pred_val = sess.run(
+                    [
+                        self.graph_keys['pred'],
+                    ],
+                    feed_dict={
+                        self.graph_keys['X']: batch_X,
+                        self.graph_keys['keep_prob']: 1.0,  # needs to be 1.0 for prediction
+                        self.graph_keys['in_sample_cutoff']: total_sample_size
+                    }
+                )
+                # log.info(f'[{self.sessid}] Prediction run successful.')
+                yield pred_val
+    # end predict
 
 
 # using tf.nn.rnn_cell.GRUCell
