@@ -170,8 +170,8 @@ class LSTM:
             log = logger
         log.info(f"[{self.sessid}] Session start")
         log.info(f"[{self.sessid}] Input features: {self.n_input_features}")
-        log.info(f"[{self.sessid}] Num of units in each LSTM cell: {self.n_states}")
-        log.info(f"[{self.sessid}] Num of stacked LSTM layers: {self.n_layers}")
+        log.info(f"[{self.sessid}] Num of units in each {self.cell_type} cell: {self.n_states}")
+        log.info(f"[{self.sessid}] Num of stacked {self.cell_type} layers: {self.n_layers}")
         log.info(f"[{self.sessid}] Num of unrolled time steps: {self.n_time_steps}")
         log.info(f"[{self.sessid}] Activation function: {self.activation.__name__}")
         log.info(f"[{self.sessid}] Dropout rate during training: {1 - self.keep_prob}")
@@ -180,7 +180,7 @@ class LSTM:
         log.info(f"[{self.sessid}] Start learning rate: {self.start_learning_rate}")
         log.info(f"[{self.sessid}] Learning rate decay steps: {self.decay_steps}")
         log.info(f"[{self.sessid}] Learning rate decay rate: {self.decay_rate}")
-        log.info(f"[{self.sessid}] Inner iteration per id: {self.inner_iteration}")
+        log.info(f"[{self.sessid}] Inner iterations: {self.inner_iteration}")
         log.info(f"[{self.sessid}] Forward prediction period: {self.forward_step}")
 
     @staticmethod
@@ -543,7 +543,7 @@ class LSTM:
                 tic = time()
                 actual_oos = None
                 predicted_oos = None
-                epoch_loss = 0.0
+                loss_epoch = 0.0
 
                 for batch_X, batch_y, y_is_mean, y_is_std, in_sample_size, total_sample_size in data_feeder():
                     # Run optimization
@@ -641,7 +641,7 @@ class LSTM:
 
                     self.all_corr_is.append(pearson_corr_is_val)
                     self.all_corr_oos.append(pearson_corr_oos_val)
-                    epoch_loss += loss_val
+                    loss_epoch += loss_val
 
                     if return_weights:
                         if self.cell_type == 'LSTM':
@@ -717,9 +717,12 @@ class LSTM:
                     print(corr_epoch_oos)
 
                 self.all_epochs.append(i)
-                self.all_losses_per_epoch.append(epoch_loss)
+                self.all_losses_per_epoch.append(loss_epoch)
                 self.all_corr_oos_per_epoch.append(corr_epoch_oos)
-                log.info(f'[{self.sessid}] Epoch {i} total out-of-sample pearson corr: {corr_epoch_oos:8.5f}')
+                log.info(
+                    f'[{self.sessid}] Epoch {i}: total loss: {loss_epoch}, '
+                    f'total oos pearson corr: {corr_epoch_oos:8.5f}'
+                )
                 log.info(
                     f"[{self.sessid}] Epoch {i} Ends ======================================================"
                 )
