@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # lstm.py
-# author: Tony Tong (taotong@berkeley.edu)
+# author: Tony Tong (taotong@berkeley.edu, ttong@pro-ai.org)
 
 import numpy as np
 import random
