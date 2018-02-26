@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # lstm.py
-# author: Tony Tong (taotong@berkeley.edu, ttong@pro-ai.org)
+# author: Tony Tong (taotong@berkeley.edu)
 
 import numpy as np
 import random
@@ -170,6 +170,7 @@ class LSTM:
             log = logger
         log.info(f"[{self.sessid}] Session start")
         log.info(f"[{self.sessid}] Input features: {self.n_input_features}")
+        log.info(f"[{self.sessid}] Output features: {self.n_output_features}")
         log.info(f"[{self.sessid}] Num of units in each {self.cell_type} cell: {self.n_states}")
         log.info(f"[{self.sessid}] Num of stacked {self.cell_type} layers: {self.n_layers}")
         log.info(f"[{self.sessid}] Num of unrolled time steps: {self.n_time_steps}")
@@ -367,6 +368,7 @@ class LSTM:
                         pred_oos = pred[in_sample_cutoff:, :]
 
                     with tf.name_scope('stats'):
+                        epsilon = 1.e-4
                         # Pearson correlation to evaluate the model, here is for in-sample training data
                         covariance_is = tf.matmul(
                             tf.transpose(tf.subtract(pred_is, tf.reduce_mean(pred_is, axis=0, keepdims=True))),
@@ -380,7 +382,7 @@ class LSTM:
                         )  # variance of y_is, shape [1, n_output_features]
                         # pearson correlation matrix, shape [n_output_features, n_output_features]
                         pearson_corr_is = tf.div(
-                            covariance_is, tf.sqrt(tf.matmul(tf.transpose(var_pred_is), var_y_is)),
+                            covariance_is, tf.sqrt(tf.matmul(tf.transpose(var_pred_is), var_y_is)) + epsilon,
                             name='pearson_corr_is'
                         )
 
@@ -397,7 +399,7 @@ class LSTM:
                         )  # variance of y_oos, shape [1, n_output_features]
                         # pearson correlation matrix, shape [n_output_features, n_output_features]
                         pearson_corr_oos = tf.div(
-                            covariance_oos, tf.sqrt(tf.matmul(tf.transpose(var_pred_oos), var_y_oos)),
+                            covariance_oos, tf.sqrt(tf.matmul(tf.transpose(var_pred_oos), var_y_oos)) + epsilon,
                             name='pearson_corr_oos'
                         )
 
@@ -491,7 +493,7 @@ class LSTM:
 
     def train(self, batch_X=None, batch_y=None, in_sample_size=None, y_is_mean=0.0, y_is_std=1.0, data_feeder=None,
               restore_model=False, pre_trained_model=None, epoch_prev=0, epoch_end=21, inner_iteration=None,
-              step=1, writer_step=1, display_step=50, return_weights=False, log=None, mode='train', verbose=0):
+              step=1, writer_step=1, display_step=50, return_weights=False, log=None, verbose=0):
         """Perform training of the LSTM network on specified compute device.
         There are two ways of feeding in data:
 
@@ -549,15 +551,19 @@ class LSTM:
                 loss_epoch = 0.0
 
                 for batch_X, batch_y, y_is_mean, y_is_std, in_sample_size in data_feeder():
-                    # Run optimization
-                    # Note: dropout is intended for training only
                     total_sample_size = batch_X.shape[0]
+                    if np.isfinite(batch_X).sum() != batch_X.size or \
+                       np.isfinite(batch_y).sum() != batch_y.size:
+                        continue
+                    assert np.isfinite(y_is_mean).sum() == y_is_mean.size
+                    assert np.isfinite(y_is_std).sum() == y_is_std.size
                     assert in_sample_size <= total_sample_size, "in_sample_size needs to be smaller than total"
 
                     # if inner_iteration is passed in, then it takes priority over internal state
                     if inner_iteration is None:
                         inner_iteration = self.inner_iteration
-
+                    # Run optimization
+                    # Note: dropout is intended for training only
                     for _ in range(inner_iteration):
                         _, current_rate, states_val = sess.run(
                             [
@@ -573,7 +579,8 @@ class LSTM:
                                 self.graph_keys['global_step']: i / epoch_end
                             }
                         )
-
+                    if verbose >= 3:  # DEBUG
+                        print("states_val", states_val)
                     # Obtain out of sample target variable and prediction
                     y_val, pred_val, y_oos_val, pred_oos_val, \
                         pearson_corr_is_val, pearson_corr_oos_val, loss_val, summary = sess.run(
@@ -594,8 +601,13 @@ class LSTM:
                             self.graph_keys['in_sample_cutoff']: in_sample_size
                         }
                     )
-                    assert (y_val[in_sample_size:, ] == y_oos_val).all()
-                    assert (pred_val[in_sample_size:, ] == pred_oos_val).all()
+                    if verbose >= 3:  # DEBUG
+                        print("y_val", y_val)
+                        print("pred_val", pred_val)
+                    assert (y_val[in_sample_size:, ] == y_oos_val).all(), \
+                        "y_val and y_oos_val fails, likely nan."
+                    assert (pred_val[in_sample_size:, ] == pred_oos_val).all(), \
+                        "pred_val and pred_oos_val fails, likely nan."
 
                     # reverse transform before recording the results
                     # if no reverse transform is desired inside training, use default y_is_mean=0.0 and y_is_std=1.0
@@ -727,7 +739,7 @@ class LSTM:
                 )
                 try:
                     _ = self.model_saver.save(sess, os.path.join(self.model_dir, f"{self.sessid}_epoch_{i}.ckpt"))
-                    _ = self.model_saver.save(sess, os.path.join(self.model_dir, f"{self.sessid}_latest.ckpt"))
+                    _ = self.model_saver.save(sess, f"./{self.sessid}_latest.ckpt")
                     log.info("Model checkpoint successfully saved.")
                 except Exception:
                     log.info("Model checkpoint save unsuccessful")
@@ -794,7 +806,7 @@ class LSTM:
                         "Alternatively, you may try restoring a previously trained model specifically."
                     )
                 # Restore graph variables from training using default model persistence
-                self.model_saver.restore(sess, os.path.join(self.model_dir, f"{self.sessid}_latest.ckpt"))
+                self.model_saver.restore(sess, f"./{self.sessid}_latest.ckpt")
             self.logging_session_parameters()
 
             for batch_X in data_feeder():
