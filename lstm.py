@@ -726,7 +726,8 @@ class LSTM:
                     f"[{self.sessid}] Epoch {i} Ends ======================================================"
                 )
                 try:
-                    _ = self.model_saver.save(sess, os.path.join(self.model_dir, f"model_epoch_{i}.ckpt"))
+                    _ = self.model_saver.save(sess, os.path.join(self.model_dir, f"{self.sessid}_epoch_{i}.ckpt"))
+                    _ = self.model_saver.save(sess, os.path.join(self.model_dir, f"{self.sessid}_latest.ckpt"))
                     log.info("Model checkpoint successfully saved.")
                 except Exception:
                     log.info("Model checkpoint save unsuccessful")
@@ -788,7 +789,12 @@ class LSTM:
                 log.info(f"[{self.sessid}] Restored pre-trained model successfully")
             else:
                 if self.sessid is None:
-                    self.sessid = id_generator()
+                    raise ValueError(
+                        "No valid session id (sessid) from training in this active session. "
+                        "Alternatively, you may try restoring a previously trained model specifically."
+                    )
+                # Restore graph variables from training using default model persistence
+                self.model_saver.restore(sess, os.path.join(self.model_dir, f"{self.sessid}_latest.ckpt"))
             self.logging_session_parameters()
 
             for batch_X in data_feeder():
