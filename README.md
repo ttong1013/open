@@ -15,13 +15,32 @@ g = LSTM(n_input_features=10, batch_size=None, n_states=50, n_layers=2, n_time_s
          l1_reg=0.05, l2_reg=0.01, start_learning_rate=0.001, decay_steps=1, decay_rate=0.3, 
          inner_iteration=10, forward_step=1)
 
-# Using a generator data feeder
-results = g.train(data_feeder=generate_training_data, epoch_end=50, 
+# Using a generator data feeder and train 10 epochs
+results = g.train(data_feeder=training_data_feeder, epoch_end=10, 
                   display_step=1, return_weights=True)
 
-# Using direct batch data
+# Continue from previous trained state and train another 10 epochs
+results = g.train(data_feeder=training_data_feeder, epoch_end=20, 
+                  display_step=1, return_weights=True)
+                  
+# Continue training from a previously saved model from epoch 11 to 20
+results = g.train(data_feeder=training_data_feeder, pre_trained_model='prev_model.ckpt', 
+                  epoch_prev=10, epoch_end=20, display_step=1, return_weights=True)
+
+# Reset previous state and train from scratch for 20 epochs
+results = g.train(data_feeder=training_data_feeder, restore_model=False, 
+                  epoch_end=20, display_step=1, return_weights=True)
+
+
+# Use trained model to predict
+predicted = g.predict(data_feeder=prediction_data_feeder)
+
+
+# Alternatively, we can use batch data
 results = g.train(batch_X=batch_X, batch_y=batch_y, in_sample_size=1600, epoch_end=50, 
                   display_step=1, return_weights=True)
+
+predicted = g.predict(batch_X=batch_X)
 ```
 
 #### GRU network
@@ -29,7 +48,7 @@ results = g.train(batch_X=batch_X, batch_y=batch_y, in_sample_size=1600, epoch_e
 ```python
 g = GRU(n_input_features=10, batch_size=None, n_states=50, n_layers=2, n_time_steps=100, 
         l1_reg=0.05, l2_reg=0.01, start_learning_rate=0.001, decay_steps=1, decay_rate=0.3, 
-        inner_iteration=10, forward_step=1, scope='gru')
+        inner_iteration=10, forward_step=1)
 ```
 
 #### Basic RNN network
@@ -37,7 +56,13 @@ g = GRU(n_input_features=10, batch_size=None, n_states=50, n_layers=2, n_time_st
 ```python
 g = RNN(n_input_features=10, batch_size=None, n_states=50, n_layers=2, n_time_steps=100, 
         l1_reg=0.05, l2_reg=0.01, start_learning_rate=0.001, decay_steps=1, decay_rate=0.3, 
-        inner_iteration=10, forward_step=1, scope='rnn')
+        inner_iteration=10, forward_step=1)
+```
+
+Show instance status:
+
+```python
+g.show_status()
 ```
 
 Show tensorflow graph:

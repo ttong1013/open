@@ -1,6 +1,6 @@
 # -*- coding: utf-8 -*-
 # lstm.py
-# author: Tony Tong (taotong@berkeley.edu)
+# author: Tony Tong (taotong@berkeley.edu, ttong@pro-ai.org)
 
 import numpy as np
 import random
@@ -108,6 +108,8 @@ class LSTM:
         self.graph = None
         self.graph_keys = None
         self.graph_ready = False
+        self.graph_trained = False
+        self.trained_epochs = 0
         self.scope = scope
         self.log_dir = log_dir
         self.model_saver = None
@@ -492,7 +494,7 @@ class LSTM:
     # end create_lstm_graph
 
     def train(self, batch_X=None, batch_y=None, in_sample_size=None, y_is_mean=0.0, y_is_std=1.0, data_feeder=None,
-              restore_model=False, pre_trained_model=None, epoch_prev=0, epoch_end=21, inner_iteration=None,
+              restore_model=True, pre_trained_model=None, epoch_prev=0, epoch_end=21, inner_iteration=None,
               step=1, writer_step=1, display_step=50, return_weights=False, log=None, verbose=0):
         """Perform training of the LSTM network on specified compute device.
         There are two ways of feeding in data:
@@ -525,28 +527,44 @@ class LSTM:
                         config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=True)) as sess:
             # Restore latest checkpoint
             if restore_model:
-                try:
-                    self.model_saver.restore(sess, os.path.join(self.model_dir, pre_trained_model))
-                except Exception as msg:
-                    log.exception("Session restore failed: ", msg)
-                    raise Exception
-                if self.sessid is None:
+                if pre_trained_model is not None:
+                    try:
+                        self.model_saver.restore(sess, os.path.join(self.model_dir, pre_trained_model))
+                    except Exception as msg:
+                        log.exception("Session restore failed: ", msg)
+                        raise Exception(msg)
+                    if self.sessid is None:
+                        self.sessid = id_generator()
+                    i = epoch_prev + 1
+                    log.info(f"[{self.sessid}] Restored pre-trained model successfully")
+                    self.logging_session_parameters()
+                elif self.graph_trained:  # pre_trained_model is None and graph has been trained in a previous session
+                    i = self.trained_epochs + 1
+                    assert self.sessid is not None
+                    try:
+                        self.model_saver.restore(sess, f"./{self.sessid}_latest.ckpt")
+                    except Exception as msg:
+                        log.exception("Active session restore failed: ", msg)
+                        raise Exception
+                    log.info(f"[{self.sessid}] Restored model parameters from previous active session.")
+                    self.logging_session_parameters()
+                else:
+                    epoch_prev = 0
+                    sess.run(self.graph_keys['init'])
                     self.sessid = id_generator()
-                log.info(f"[{self.sessid}] Restored pre-trained model successfully")
-                self.logging_session_parameters()
+                    self.logging_session_parameters()
+                    i = epoch_prev + 1  # set epoch counter
             else:
                 epoch_prev = 0
                 sess.run(self.graph_keys['init'])
                 self.sessid = id_generator()
                 self.logging_session_parameters()
-
-            # set epoch counter
-            i = epoch_prev + 1
+                i = epoch_prev + 1  # set epoch counter
 
             while i <= epoch_end:
                 log.info(f"[{self.sessid}] Epoch {i} Starts ******************************************************")
                 tic = time()
-                actual_oos = None
+                actual_oos = None  # resets for each epoch
                 predicted_oos = None
                 loss_epoch = 0.0
 
@@ -558,10 +576,16 @@ class LSTM:
                     assert np.isfinite(y_is_mean).sum() == y_is_mean.size
                     assert np.isfinite(y_is_std).sum() == y_is_std.size
                     assert in_sample_size <= total_sample_size, "in_sample_size needs to be smaller than total"
+                    assert batch_X.shape[2] == self.n_input_features, \
+                        "batch_X should have shape [batch_size, n_time_steps, n_input_features]"
+                    assert batch_y.shape[1] == self.n_output_features, \
+                        "batch_y should have shape [batch_size, n_output_features]"
 
                     # if inner_iteration is passed in, then it takes priority over internal state
                     if inner_iteration is None:
                         inner_iteration = self.inner_iteration
+                    assert isinstance(inner_iteration, int) and inner_iteration >= 1, "inner_iteration has to be >= 1"
+
                     # Run optimization
                     # Note: dropout is intended for training only
                     for _ in range(inner_iteration):
@@ -647,8 +671,8 @@ class LSTM:
                     else:
                         self.all_predicted_oos = np.r_[self.all_predicted_oos, np.array(pred_oos_val)]
 
-                    pearson_corr_is_val = np.diagonal(pearson_corr_is_val)[0]  # Taking the corr of first output only
-                    pearson_corr_oos_val = np.diagonal(pearson_corr_oos_val)[0]  # Taking the corr of the first output only
+                    pearson_corr_is_val = np.diagonal(pearson_corr_is_val).mean()  # Taking the mean of all outputs
+                    pearson_corr_oos_val = np.diagonal(pearson_corr_oos_val).mean()  # Taking the mean of all outputs
 
                     self.all_corr_is.append(pearson_corr_is_val)
                     self.all_corr_oos.append(pearson_corr_oos_val)
@@ -719,11 +743,16 @@ class LSTM:
                     step += 1  # finishes this id, continue to next id step
 
                 # epoch finishes
+                assert actual_oos.shape == predicted_oos.shape
                 if verbose >= 2:
                     print("actual shape: ", actual_oos.shape)
                     print("predicted shape: ", predicted_oos.shape)
 
-                corr_epoch_oos = np.corrcoef(actual_oos.reshape(1, -1), predicted_oos.reshape(1, -1))[0, 1]
+                corr_epoch = []
+                for j in range(actual_oos.shape[1]):  # loop through n_output_features
+                    corr_epoch.append(np.corrcoef(actual_oos[:, j], predicted_oos[:, j])[0, 1])
+                corr_epoch_oos = np.array(corr_epoch).mean()
+
                 if verbose >= 2:
                     print(corr_epoch_oos)
 
@@ -745,6 +774,8 @@ class LSTM:
                     log.info("Model checkpoint save unsuccessful")
                 i += 1  # onto next epoch
 
+            self.graph_trained = True  # indicating the current graph has been trained in the active session
+            self.trained_epochs = i - 1
             results = dict(
                 all_epochs=self.all_epochs,
                 all_losses_per_epoch=self.all_losses_per_epoch,
@@ -764,10 +795,11 @@ class LSTM:
                         fc_states=self.fc_states
                     )
                 )
+
             return results
     # end train
 
-    def predict(self, batch_X=None, data_feeder=None, restore_model=False, pre_trained_model=None, log=None):
+    def predict(self, batch_X=None, data_feeder=None, pre_trained_model=None, log=None):
         """Use trained model or restore from pre-trained model to predict
         Note: if a generator is passed in, the tensorflow Session will hold resources active until iterating
         through the entire iterable dataset.
@@ -790,26 +822,29 @@ class LSTM:
         with tf.Session(graph=self.graph,
                         config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=True)) as sess:
             # Restore latest checkpoint
-            if restore_model:
+            if pre_trained_model is not None:
                 try:
                     self.model_saver.restore(sess, os.path.join(self.model_dir, pre_trained_model))
                 except Exception as msg:
                     log.exception("Session restore failed: ", msg)
-                    raise Exception
+                    raise Exception(msg)
                 if self.sessid is None:
                     self.sessid = id_generator()
+                    log.info(f"[{self.sessid}] New sessid created for restored pre-trained model")
                 log.info(f"[{self.sessid}] Restored pre-trained model successfully")
             else:
-                if self.sessid is None:
-                    raise ValueError(
-                        "No valid session id (sessid) from training in this active session. "
-                        "Alternatively, you may try restoring a previously trained model specifically."
-                    )
+                assert self.sessid is not None, \
+                    "No valid session id (sessid) from training in this active session. "\
+                    "Alternatively, you may try restoring a previously trained model specifically."
                 # Restore graph variables from training using default model persistence
                 self.model_saver.restore(sess, f"./{self.sessid}_latest.ckpt")
             self.logging_session_parameters()
 
             for batch_X in data_feeder():
+                # In the case that training feeder is used to feed data, we only take the first input, batch_X
+                if isinstance(batch_X, tuple):
+                    batch_X = batch_X[0]
+
                 total_sample_size = batch_X.shape[0]
                 # Obtain out of sample target variable and prediction
                 pred_val = sess.run(
@@ -828,7 +863,7 @@ class LSTM:
 
 
 # using tf.nn.rnn_cell.GRUCell
-GRU = partial(LSTM, cell_type='GRU')
+GRU = partial(LSTM, cell_type='GRU', scope='gru')
 
 # using tf.nn.rnn_cell.BasicRNNCell
-RNN = partial(LSTM, cell_type='RNN')
+RNN = partial(LSTM, cell_type='RNN', scope='rnn')
