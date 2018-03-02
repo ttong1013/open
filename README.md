@@ -1,4 +1,5 @@
-## Deep LSTM / GRU / RNN Framework for Financial Time-Series Prediction
+## Deep LSTM / GRU / RNN Framework for Financial Time-Series Prediction 
+### with Multi-GPU Support
 
 Tony Tong (taotong@berkeley.edu, ttong@pro-ai.org)
 
