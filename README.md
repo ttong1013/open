@@ -3,7 +3,9 @@
 Tony Tong (taotong@berkeley.edu, ttong@pro-ai.org)
 
 ### lstm.py
-A high-level multi-layer LSTM recurrent neural network interface tailored for financial time-series prediction built on top of [TensorFlow](http://tensorflow.org) backend.  The class container also provides a convenient wrapper for GRU or basic RNN network as well. 
+A high-level multi-layer LSTM recurrent neural network interface tailored for financial time-series prediction built on top of [TensorFlow](http://tensorflow.org) backend.  It has multi-GPU support that you can create separate compute instances in different GPUs and run them concurrently.  We look forward to further expand the scaling features in the future (within-instance multi-GPU support, and GPU cluster support). 
+
+The class container also provides a convenient wrapper for GRU or basic RNN network as well. 
 
 <img src="multilayer_lstm.jpg" alt="lstm" align="middle" width=70%>
 
@@ -13,7 +15,7 @@ A high-level multi-layer LSTM recurrent neural network interface tailored for fi
 # Build LSTM network
 g = LSTM(n_input_features=10, batch_size=None, n_states=50, n_layers=2, n_time_steps=100, 
          l1_reg=0.05, l2_reg=0.01, start_learning_rate=0.001, decay_steps=1, decay_rate=0.3, 
-         inner_iteration=10, forward_step=1)
+         inner_iteration=10, forward_step=1, device='gpu', device_num=0)
 
 # Using a generator data feeder and train 10 epochs
 results = g.train(data_feeder=training_data_feeder, epoch_end=10, 
@@ -48,7 +50,7 @@ predicted = g.predict(batch_X=batch_X)
 ```python
 g = GRU(n_input_features=10, batch_size=None, n_states=50, n_layers=2, n_time_steps=100, 
         l1_reg=0.05, l2_reg=0.01, start_learning_rate=0.001, decay_steps=1, decay_rate=0.3, 
-        inner_iteration=10, forward_step=1)
+        inner_iteration=10, forward_step=1, device='gpu', device_num=1)
 ```
 
 #### Basic RNN network
@@ -56,7 +58,7 @@ g = GRU(n_input_features=10, batch_size=None, n_states=50, n_layers=2, n_time_st
 ```python
 g = RNN(n_input_features=10, batch_size=None, n_states=50, n_layers=2, n_time_steps=100, 
         l1_reg=0.05, l2_reg=0.01, start_learning_rate=0.001, decay_steps=1, decay_rate=0.3, 
-        inner_iteration=10, forward_step=1)
+        inner_iteration=10, forward_step=1, device='gpu', device_num=0)
 ```
 
 Show instance status:
