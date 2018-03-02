@@ -96,7 +96,8 @@ class LSTM:
                  activation=tf.nn.relu, keep_prob=0.5, l1_reg=1e-2, l2_reg=1e-3,
                  start_learning_rate=0.001, decay_steps=1, decay_rate=0.3,
                  inner_iteration=10, forward_step=1, create_graph=True,
-                 scope='lstm', log_dir='logs', model_dir='saved_models', verbose=0):
+                 scope='lstm', log_dir='logs', model_dir='saved_models',
+                 device='gpu', device_num=0, verbose=0):
         self.n_input_features = n_input_features
         self.n_output_features = n_output_features
         self.batch_size = batch_size
@@ -141,11 +142,20 @@ class LSTM:
 
         # Locate available computing devices and save in self.device_list
         self.device_list = self.find_compute_devices()
-        try:
-            self.compute_device = self.device_list['gpu'][0]
-        except (KeyError, IndexError) as msg:
-            print(msg)
-            self.compute_device = self.device_list['cpu'][0]  # default to cpu as computing device
+        if device.lower() == 'cpu':
+            self.compute_device = self.device_list['cpu'][0]
+        elif device.lower() == 'gpu':
+            try:
+                self.compute_device = self.device_list['gpu'][device_num]
+            except (KeyError, IndexError) as msg:
+                print(msg)
+                print("Will try GPU device 0...")
+            try:
+                self.compute_device = self.device_list['gpu'][0]  # Try to grab the first gpu
+            except (KeyError, IndexError) as msg:
+                print(msg)
+                print("Will default to CPU for computing")
+                self.compute_device = self.device_list['cpu'][0]  # default to cpu as computing device
 
         # If create_graph is set to True, then create the graph directly during the initiation.
         # You can always reset_graph and recreate new ones later.
@@ -163,7 +173,8 @@ class LSTM:
                  activation=tf.nn.relu, keep_prob=0.5, l1_reg=1e-2, l2_reg=1e-3,
                  start_learning_rate=0.001, decay_steps=1, decay_rate=0.3,
                  iter_per_id=10, forward_step=1, create_graph=True,
-                 scope='lstm', log_dir='logs', model_dir='saved_models', verbose=0):
+                 scope='lstm', log_dir='logs', model_dir='saved_models',
+                 device='gpu', device_num=0, verbose=0):
         """A wrapper for calling the __init__ function"""
 
         if self.graph is not None:
@@ -176,7 +187,8 @@ class LSTM:
                       activation=activation, keep_prob=keep_prob, l1_reg=l1_reg, l2_reg=l2_reg,
                       start_learning_rate=start_learning_rate, decay_steps=decay_steps, decay_rate=decay_rate,
                       inner_iteration=iter_per_id, forward_step=forward_step, create_graph=create_graph,
-                      scope=scope, log_dir=log_dir, model_dir=model_dir, verbose=verbose)
+                      scope=scope, log_dir=log_dir, model_dir=model_dir,
+                      device=device, device_num=device_num, verbose=verbose)
 
     def logging_session_parameters(self, log=None):
         if log is None:
@@ -548,8 +560,11 @@ class LSTM:
                 return [(batch_X, batch_y, y_is_mean, y_is_std, in_sample_size, total_sample_size)]
 
         # Launch a tensorflow compute session
-        with tf.Session(graph=self.graph,
-                        config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=True)) as sess:
+        if self.compute_device.find('CPU') != -1:
+            config = tf.ConfigProto(device_count={'GPU': 0}, allow_soft_placement=True, log_device_placement=True)
+        else:
+            config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=True)
+        with tf.Session(graph=self.graph, config=config) as sess:
             # Restore latest checkpoint
             if restore_model:
                 if pre_trained_model is not None:
@@ -852,8 +867,11 @@ class LSTM:
                 return [batch_X]
 
         # Launch a tensorflow compute session
-        with tf.Session(graph=self.graph,
-                        config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=True)) as sess:
+        if self.compute_device.find('CPU') != -1:
+            config = tf.ConfigProto(device_count={'GPU': 0}, allow_soft_placement=True, log_device_placement=True)
+        else:
+            config = tf.ConfigProto(allow_soft_placement=True, log_device_placement=True)
+        with tf.Session(graph=self.graph, config=config) as sess:
             # Restore latest checkpoint
             if pre_trained_model is not None:
                 try:
@@ -906,3 +924,38 @@ GRU = partial(LSTM, cell_type='GRU', scope='gru')
 
 # using tf.nn.rnn_cell.BasicRNNCell
 RNN = partial(LSTM, cell_type='RNN', scope='rnn')
+
+
+def test():
+    # Model Network Parameters
+    batch_size = None
+    n_input_features = 10
+    n_output_features = 10
+    n_states = 30
+    n_layers = 2
+    n_time_steps = 20  # Number of unrolled time steps
+    activation_fn = tf.nn.relu
+    keep_prob_rate = 0.5  # keep_prob = 1 - dropout, for training only
+    l2_reg_scale = 100e-3
+    l1_reg_scale = 500e-3
+
+    # Hyperparameters
+    start_learning_rate = 0.0010
+    decay_steps = 1
+    decay_rate = 0.15
+    inner_iteration = 20
+    forward_step = 3
+
+    # Build recurrent neural network
+    g = LSTM(n_input_features=n_input_features, n_output_features=n_output_features, batch_size=batch_size,
+             n_states=n_states, n_layers=n_layers, n_time_steps=n_time_steps,
+             activation=activation_fn, keep_prob=keep_prob_rate, l1_reg=l1_reg_scale, l2_reg=l2_reg_scale,
+             start_learning_rate=start_learning_rate, decay_steps=decay_steps, decay_rate=decay_rate,
+             inner_iteration=inner_iteration, forward_step=forward_step, device='cpu', device_num=0, verbose=1)
+
+    with tf.Session(graph=g.graph, config=tf.ConfigProto(allow_soft_placement=True, log_device_placement=True)) as sess:
+        sess.run(g.graph_keys['init'])
+
+
+if __name__ == "__main__":
+    test()
