@@ -1,6 +1,16 @@
 # -*- coding: utf-8 -*-
 # lstm.py
+#
+# based on tensorflow 1.5.0 (needs Cuda 9.0 and CuDNN >7.1 support)
+#
 # author: Tony Tong (taotong@berkeley.edu, ttong@pro-ai.org)
+#
+# TODO: Write a more generalized data_feeder factory method to streamline different types of input data features.
+# TODO: Write a high-level model auto-tuning wrapper to systematically explore hyperparameter space to optimize model.
+# TODO: Add multiple GPU support for data parallelism (multiple graphs on different GPUs and trained on unified data
+# TODO:     feeder.
+# TODO: Experiment with accessing tensorflow cluster for large-scale parallelism.
+
 
 import numpy as np
 import random
@@ -122,6 +132,7 @@ class LSTM:
         self.all_predicted_oos = None
         self.all_epochs = []
         self.all_losses_per_epoch = []
+        self.all_losses_oos_per_epoch = []
         self.all_corr_oos_per_epoch = []
         self.all_corr_is = []
         self.all_corr_oos = []
@@ -493,6 +504,20 @@ class LSTM:
                     )
     # end create_lstm_graph
 
+    def clear_prev_results(self):
+        self.all_actual_is = None
+        self.all_actual_oos = None
+        self.all_predicted_is = None
+        self.all_predicted_oos = None
+        self.all_epochs = []
+        self.all_losses_per_epoch = []
+        self.all_losses_oos_per_epoch = []
+        self.all_corr_oos_per_epoch = []
+        self.all_corr_is = []
+        self.all_corr_oos = []
+        self.cell_states = dict()  # dictionary holding the last layer rnn cell states
+        self.fc_states = dict()  # dictionary holding the rnn to output fc layer states
+
     def train(self, batch_X=None, batch_y=None, in_sample_size=None, y_is_mean=0.0, y_is_std=1.0, data_feeder=None,
               restore_model=True, pre_trained_model=None, epoch_prev=0, epoch_end=21, inner_iteration=None,
               step=1, writer_step=1, display_step=50, return_weights=False, log=None, verbose=0):
@@ -542,19 +567,21 @@ class LSTM:
                     i = self.trained_epochs + 1
                     assert self.sessid is not None
                     try:
-                        self.model_saver.restore(sess, f"./{self.sessid}_latest.ckpt")
+                        self.model_saver.restore(sess, os.path.join(self.model_dir, f"{self.sessid}_latest.ckpt"))
                     except Exception as msg:
                         log.exception("Active session restore failed: ", msg)
                         raise Exception
                     log.info(f"[{self.sessid}] Restored model parameters from previous active session.")
                     self.logging_session_parameters()
                 else:
+                    self.clear_prev_results()
                     epoch_prev = 0
                     sess.run(self.graph_keys['init'])
                     self.sessid = id_generator()
                     self.logging_session_parameters()
                     i = epoch_prev + 1  # set epoch counter
             else:
+                self.clear_prev_results()
                 epoch_prev = 0
                 sess.run(self.graph_keys['init'])
                 self.sessid = id_generator()
@@ -567,8 +594,9 @@ class LSTM:
                 actual_oos = None  # resets for each epoch
                 predicted_oos = None
                 loss_epoch = 0.0
+                loss_oos_epoch = 0.0  # validation set loss
 
-                for batch_X, batch_y, y_is_mean, y_is_std, in_sample_size in data_feeder():
+                for batch_X, batch_y, y_is_mean, y_is_std, batch_y_index, in_sample_size, batch_id in data_feeder():
                     total_sample_size = batch_X.shape[0]
                     if np.isfinite(batch_X).sum() != batch_X.size or \
                        np.isfinite(batch_y).sum() != batch_y.size:
@@ -607,7 +635,7 @@ class LSTM:
                         print("states_val", states_val)
                     # Obtain out of sample target variable and prediction
                     y_val, pred_val, y_oos_val, pred_oos_val, \
-                        pearson_corr_is_val, pearson_corr_oos_val, loss_val, summary = sess.run(
+                        pearson_corr_is_val, pearson_corr_oos_val, loss_val, loss_oos_val, summary = sess.run(
                         [
                             self.graph_keys['y'],
                             self.graph_keys['pred'],
@@ -616,9 +644,10 @@ class LSTM:
                             self.graph_keys['pearson_corr_is'],
                             self.graph_keys['pearson_corr_oos'],
                             self.graph_keys['loss'],
+                            self.graph_keys['loss_oos'],
                             self.graph_keys['summary_op']
                         ],
-                        feed_dict={
+                            feed_dict={
                             self.graph_keys['X']: batch_X,
                             self.graph_keys['y']: batch_y,
                             self.graph_keys['keep_prob']: 1.0,  # needs to be 1.0 for prediction
@@ -677,6 +706,7 @@ class LSTM:
                     self.all_corr_is.append(pearson_corr_is_val)
                     self.all_corr_oos.append(pearson_corr_oos_val)
                     loss_epoch += loss_val
+                    loss_oos_epoch += loss_oos_val
 
                     if return_weights:
                         if self.cell_type == 'LSTM':
@@ -736,7 +766,8 @@ class LSTM:
                         writer_step += 1
                         toc = time() - tic
                         log.info(
-                            f"[{self.sessid}] Iter:{step}, LR:{current_rate:.5f}, mbatch loss: {loss_val:.1f},, "
+                            f"[{self.sessid}] Iter:{step}, LR:{current_rate:.5f}, mbatch_id: {batch_id}, "
+                            f"loss: {loss_val:.1f}, validation loss: {loss_oos_val:.1f}, "
                             f"mbatch in-sample corr:{pearson_corr_is_val:7.4f}, oos corr:{pearson_corr_oos_val:7.4f} "
                             f"({in_sample_size}/{total_sample_size})), {toc:.1f}s elapsed."
                         )
@@ -758,9 +789,10 @@ class LSTM:
 
                 self.all_epochs.append(i)
                 self.all_losses_per_epoch.append(loss_epoch)
+                self.all_losses_oos_per_epoch.append(loss_oos_epoch)
                 self.all_corr_oos_per_epoch.append(corr_epoch_oos)
                 log.info(
-                    f'[{self.sessid}] Epoch {i}: total loss: {loss_epoch:.1f}, '
+                    f'[{self.sessid}] Epoch {i}: total loss: {loss_epoch:.1f}, validation loss: {loss_oos_epoch:.1f}, '
                     f'total oos pearson corr: {corr_epoch_oos:8.5f}'
                 )
                 log.info(
@@ -768,7 +800,7 @@ class LSTM:
                 )
                 try:
                     _ = self.model_saver.save(sess, os.path.join(self.model_dir, f"{self.sessid}_epoch_{i}.ckpt"))
-                    _ = self.model_saver.save(sess, f"./{self.sessid}_latest.ckpt")
+                    _ = self.model_saver.save(sess, os.path.join(self.model_dir, f"{self.sessid}_latest.ckpt"))
                     log.info("Model checkpoint successfully saved.")
                 except Exception:
                     log.info("Model checkpoint save unsuccessful")
@@ -779,6 +811,7 @@ class LSTM:
             results = dict(
                 all_epochs=self.all_epochs,
                 all_losses_per_epoch=self.all_losses_per_epoch,
+                all_losses_oos_per_epoch=self.all_losses_oos_per_epoch,
                 all_corr_oos_per_epoch=self.all_corr_oos_per_epoch,
                 all_corr_is=self.all_corr_is,
                 all_corr_oos=self.all_corr_oos,
@@ -837,13 +870,16 @@ class LSTM:
                     "No valid session id (sessid) from training in this active session. "\
                     "Alternatively, you may try restoring a previously trained model specifically."
                 # Restore graph variables from training using default model persistence
-                self.model_saver.restore(sess, f"./{self.sessid}_latest.ckpt")
+                self.model_saver.restore(sess, os.path.join(self.model_dir, f"{self.sessid}_latest.ckpt"))
             self.logging_session_parameters()
 
-            for batch_X in data_feeder():
+            for data in data_feeder():
                 # In the case that training feeder is used to feed data, we only take the first input, batch_X
-                if isinstance(batch_X, tuple):
-                    batch_X = batch_X[0]
+                if isinstance(data, tuple):
+                    batch_X, batch_y, y_mean, y_astd, y_index, in_sample_size, this_gvkey = data
+                else:
+                    batch_X = data
+                    batch_y, y_mean, y_astd, y_index, in_sample_size, this_gvkey = None, None, None, None, None, None
 
                 total_sample_size = batch_X.shape[0]
                 # Obtain out of sample target variable and prediction
@@ -858,7 +894,10 @@ class LSTM:
                     }
                 )
                 # log.info(f'[{self.sessid}] Prediction run successful.')
-                yield pred_val
+
+                batch_y = batch_y * y_astd + y_mean
+                pred_val = np.array(pred_val) * y_astd + y_mean
+                yield pred_val, batch_X, batch_y, y_mean, y_astd, y_index, this_gvkey
     # end predict
 
 
