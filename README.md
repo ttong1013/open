@@ -3,10 +3,13 @@
 
 Tony Tong (taotong@berkeley.edu, ttong@pro-ai.org)
 
+(currently undergoing performance enhancement by optimizing data transfer between main memory to GPU memory and also adding support for parallel sub-graphs to run multiple training sub-instances simultaneously subjected to bottleneck at GPU memory capacity or processing limit)
+
 ### lstm.py
 A high-level multi-layer LSTM recurrent neural network interface tailored for financial time-series prediction built on top of [TensorFlow](http://tensorflow.org) backend.  It has multi-GPU support that you can create separate compute instances in different GPUs and run them concurrently.  We look forward to further expand the scaling features in the future (within-instance multi-GPU support, and GPU cluster support). 
 
 The class container also provides a convenient wrapper for GRU or basic RNN network as well. 
+
 
 <img src="multilayer_lstm.jpg" alt="lstm" align="middle" width=70%>
 
